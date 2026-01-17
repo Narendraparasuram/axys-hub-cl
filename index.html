@@ -3,329 +3,117 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Axys-hub - Athletic Excellence Platform</title>
-    <script src="https://unpkg.com/@supabase/supabase-js@2.39.0/dist/umd/supabase.js"></script>
+    <title>Axys-hub</title>
+    <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
     <script src="https://cdn.tailwindcss.com"></script>
 </head>
 <body>
     <div id="app"></div>
-    
     <script>
-        // Initialize Supabase (using window.supabase from UMD)
-        const { createClient } = supabase;
-        const supabaseClient = createClient(
-            'https://agxfjrqzevqjwvlkhzxz.supabase.co',
-            'sb_publishable_onnVe10I5QZpO9f2W3tuGg_uoORomht'
-        );
-
-        // App state
-        let currentUser = null;
-        let currentView = 'login';
-        let showSignUp = false;
-
-        // Generate invite code
-        function generateInviteCode() {
-            const chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789';
-            return Array.from({length: 8}, () => chars[Math.floor(Math.random() * chars.length)]).join('');
-        }
-
-        // Sign Up
-        async function handleSignUp(email, password, name, role, sport, inviteCode) {
-            try {
-                // Create auth user
-                const { data: authData, error: authError } = await supabaseClient.auth.signUp({
-                    email: email,
-                    password: password,
-                });
-
-                if (authError) throw authError;
-
-                // Generate invite code for athletes
-                const newInviteCode = role === 'athlete' ? generateInviteCode() : null;
-                
-                // Create user record
-                const { data: userData, error: userError } = await supabaseClient
-                    .from('users')
-                    .insert([{
-                        email: email,
-                        password: password, // In production, hash this!
-                        name: name,
-                        role: role,
-                        invite_code: newInviteCode
-                    }])
-                    .select()
-                    .single();
-
-                if (userError) throw userError;
-
-                // If athlete, create athlete record
-                if (role === 'athlete') {
-                    await supabaseClient.from('athletes').insert([{
-                        user_id: userData.id,
-                        name: name,
-                        sport: sport,
-                        email: email,
-                        invite_code: newInviteCode
-                    }]);
-                }
-
-                // If professional with invite code, join team
-                if (role === 'professional' && inviteCode) {
-                    const { data: athleteData } = await supabaseClient
-                        .from('athletes')
-                        .select('*')
-                        .eq('invite_code', inviteCode)
-                        .single();
-
-                    if (athleteData) {
-                        await supabaseClient.from('team_members').insert([{
-                            athlete_id: athleteData.id,
-                            professional_id: userData.id,
-                            professional_name: name
-                        }]);
-                    }
-                }
-
-                alert('Account created successfully! You can now login.');
-                showSignUp = false;
-                currentView = 'login';
-                render();
-            } catch (error) {
-                alert('Signup error: ' + error.message);
-                console.error(error);
+        const { createClient } = window.supabase;
+        const sb = createClient('https://agxfjrqzevqjwvlkhzxz.supabase.co', 'sb_publishable_onnVe10I5QZpO9f2W3tuGg_uoORomht');
+        
+        let user = null, view = 'login', signup = false, tab = 'dashboard';
+        let athletes = [], notes = [], messages = [], tasks = [];
+        
+        function code() { return Array.from({length:8}, () => 'ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789'[Math.floor(Math.random()*36)]).join(''); }
+        
+        async function load() {
+            if (!user) return;
+            if (user.role === 'admin') ({ data: athletes } = await sb.from('athletes').select('*'));
+            if (user.role === 'athlete') {
+                const { data: a } = await sb.from('athletes').select('*').eq('email', user.email).single();
+                if (a) athletes = [a];
+                ({ data: notes } = await sb.from('notes').select('*').eq('athlete_id', a?.id));
+                ({ data: messages } = await sb.from('messages').select('*').eq('athlete_id', a?.id));
+                ({ data: tasks } = await sb.from('tasks').select('*').eq('athlete_id', a?.id));
             }
-        }
-
-        // Login
-        async function handleLogin(email, password) {
-            try {
-                const { data: authData, error: authError } = await supabaseClient.auth.signInWithPassword({
-                    email: email,
-                    password: password
-                });
-
-                if (authError) throw authError;
-
-                // Get user data from database
-                const { data: userData, error: userError } = await supabaseClient
-                    .from('users')
-                    .select('*')
-                    .eq('email', email)
-                    .single();
-
-                if (userError) throw userError;
-
-                currentUser = userData;
-                currentView = 'dashboard';
-                render();
-            } catch (error) {
-                alert('Login failed: ' + error.message);
-                console.error(error);
+            if (user.role === 'professional') {
+                const { data: tm } = await sb.from('team_members').select('*').eq('professional_id', user.id);
+                const ids = tm?.map(t => t.athlete_id) || [];
+                if (ids.length) ({ data: athletes } = await sb.from('athletes').select('*').in('id', ids));
             }
-        }
-
-        // Logout
-        function logout() {
-            supabaseClient.auth.signOut();
-            currentUser = null;
-            currentView = 'login';
-            showSignUp = false;
             render();
         }
-
-        // Render app
+        
+        async function signup(e,p,n,r,s,c) {
+            try {
+                await sb.auth.signUp({email:e, password:p});
+                const inv = r === 'athlete' ? code() : null;
+                const { data: u } = await sb.from('users').insert([{email:e,password:p,name:n,role:r,invite_code:inv}]).select().single();
+                if (r === 'athlete') await sb.from('athletes').insert([{user_id:u.id,name:n,sport:s,email:e,invite_code:inv}]);
+                if (r === 'professional' && c) {
+                    const { data: a } = await sb.from('athletes').select('*').eq('invite_code',c).single();
+                    if (a) await sb.from('team_members').insert([{athlete_id:a.id,professional_id:u.id,professional_name:n}]);
+                }
+                alert('Created! Login now'); signup = false; render();
+            } catch(err) { alert(err.message); }
+        }
+        
+        async function login(e,p) {
+            try {
+                await sb.auth.signInWithPassword({email:e,password:p});
+                const { data } = await sb.from('users').select('*').eq('email',e).single();
+                user = data; view = 'dashboard'; await load();
+            } catch(err) { alert(err.message); }
+        }
+        
         function render() {
             const app = document.getElementById('app');
-            
-            if (currentView === 'login' && !showSignUp) {
-                app.innerHTML = `
-                    <div class="min-h-screen bg-gradient-to-br from-blue-500 to-purple-600 flex items-center justify-center p-4">
-                        <div class="bg-white rounded-lg shadow-xl p-8 w-full max-w-md">
-                            <h1 class="text-4xl font-bold text-center mb-2">Axys-hub</h1>
-                            <p class="text-center text-gray-600 mb-8">The central axis of athletic excellence</p>
-                            
-                            <div class="space-y-4">
-                                <input id="loginEmail" type="email" placeholder="Email" class="w-full px-4 py-2 border rounded-lg focus:ring-2 focus:ring-blue-500">
-                                <input id="loginPassword" type="password" placeholder="Password" class="w-full px-4 py-2 border rounded-lg focus:ring-2 focus:ring-blue-500">
-                                <button onclick="doLogin()" class="w-full bg-blue-500 text-white py-3 rounded-lg hover:bg-blue-600 font-semibold">
-                                    Sign In
-                                </button>
-                            </div>
-                            
-                            <div class="mt-6 text-center">
-                                <button onclick="showSignUp = true; render();" class="text-blue-500 hover:underline font-medium">
-                                    Don't have an account? Sign Up
-                                </button>
-                            </div>
-
-                            <div class="mt-6 p-4 bg-gray-50 rounded-lg text-sm">
-                                <p class="font-semibold mb-2">Demo Accounts:</p>
-                                <button onclick="quickLogin('admin@axys-hub.com', 'admin123')" class="w-full text-left p-2 bg-white rounded hover:bg-blue-50 border mb-2">
-                                    <strong>Admin:</strong> admin@axys-hub.com
-                                </button>
-                            </div>
-                        </div>
+            if (view === 'login' && !signup) {
+                app.innerHTML = `<div class="min-h-screen bg-gradient-to-br from-blue-500 to-purple-600 flex items-center justify-center p-4">
+                    <div class="bg-white rounded-lg shadow-xl p-8 w-full max-w-md">
+                        <h1 class="text-4xl font-bold text-center mb-2">Axys-hub</h1>
+                        <p class="text-center text-gray-600 mb-8">The central axis of athletic excellence</p>
+                        <input id="e" type="email" placeholder="Email" class="w-full px-4 py-2 border rounded-lg mb-4">
+                        <input id="p" type="password" placeholder="Password" class="w-full px-4 py-2 border rounded-lg mb-4">
+                        <button onclick="login(document.getElementById('e').value, document.getElementById('p').value)" class="w-full bg-blue-500 text-white py-3 rounded-lg hover:bg-blue-600 font-semibold mb-4">Sign In</button>
+                        <button onclick="signup=true;render()" class="text-blue-500 hover:underline">Sign Up</button>
+                    </div></div>`;
+            } else if (signup) {
+                app.innerHTML = `<div class="min-h-screen bg-gradient-to-br from-blue-500 to-purple-600 flex items-center justify-center p-4">
+                    <div class="bg-white rounded-lg shadow-xl p-8 w-full max-w-md">
+                        <h1 class="text-3xl font-bold text-center mb-6">Create Account</h1>
+                        <input id="n" placeholder="Name" class="w-full px-4 py-2 border rounded-lg mb-4">
+                        <input id="e" type="email" placeholder="Email" class="w-full px-4 py-2 border rounded-lg mb-4">
+                        <input id="p" type="password" placeholder="Password" class="w-full px-4 py-2 border rounded-lg mb-4">
+                        <select id="r" class="w-full px-4 py-2 border rounded-lg mb-4" onchange="document.getElementById('s').classList.toggle('hidden',this.value!=='athlete');document.getElementById('c').classList.toggle('hidden',this.value!=='professional')">
+                            <option value="">Role</option><option value="athlete">Athlete</option><option value="professional">Professional</option><option value="admin">Admin</option>
+                        </select>
+                        <input id="s" placeholder="Sport" class="w-full px-4 py-2 border rounded-lg mb-4 hidden">
+                        <input id="c" placeholder="Invite Code" class="w-full px-4 py-2 border rounded-lg mb-4 hidden">
+                        <button onclick="signup(document.getElementById('e').value,document.getElementById('p').value,document.getElementById('n').value,document.getElementById('r').value,document.getElementById('s').value,document.getElementById('c').value)" class="w-full bg-green-500 text-white py-3 rounded-lg hover:bg-green-600 font-semibold mb-4">Create</button>
+                        <button onclick="signup=false;render()" class="text-blue-500 hover:underline">Sign In</button>
+                    </div></div>`;
+            } else {
+                const a = user.role === 'athlete' ? athletes[0] : null;
+                app.innerHTML = `<div class="min-h-screen bg-gray-100">
+                    <div class="bg-white shadow-md"><div class="max-w-7xl mx-auto px-4 py-4 flex justify-between items-center">
+                        <div><h1 class="text-2xl font-bold text-blue-600">Axys-hub</h1><p class="text-sm text-gray-600">${user.name} • ${user.role}</p></div>
+                        <button onclick="sb.auth.signOut();user=null;view='login';render()" class="px-4 py-2 bg-red-500 text-white rounded-lg">Logout</button>
+                    </div></div>
+                    <div class="bg-white border-b"><div class="max-w-7xl mx-auto px-4 flex gap-8">
+                        <button onclick="tab='dashboard';render()" class="py-4 border-b-2 ${tab==='dashboard'?'border-blue-500 text-blue-600':'border-transparent'}">Dashboard</button>
+                        <button onclick="tab='notes';render()" class="py-4 border-b-2 ${tab==='notes'?'border-blue-500 text-blue-600':'border-transparent'}">Notes</button>
+                        <button onclick="tab='messages';render()" class="py-4 border-b-2 ${tab==='messages'?'border-blue-500 text-blue-600':'border-transparent'}">Messages</button>
+                        <button onclick="tab='tasks';render()" class="py-4 border-b-2 ${tab==='tasks'?'border-blue-500 text-blue-600':'border-transparent'}">Tasks</button>
+                    </div></div>
+                    <div class="max-w-7xl mx-auto p-8">
+                        ${tab==='dashboard'?`<h2 class="text-3xl font-bold mb-6">Dashboard</h2>
+                        ${a?.invite_code?`<div class="bg-green-50 border-2 border-green-500 rounded-lg p-6 mb-6"><h3 class="text-xl font-bold mb-3">Your Invite Code</h3><p class="text-4xl font-mono font-bold text-green-600">${a.invite_code}</p><p class="mt-2 text-sm">Share with professionals</p></div>`:''}
+                        <div class="grid grid-cols-4 gap-4">
+                            <div class="bg-white p-6 rounded-lg shadow"><p class="text-gray-500">Athletes</p><p class="text-3xl font-bold">${athletes.length}</p></div>
+                            <div class="bg-white p-6 rounded-lg shadow"><p class="text-gray-500">Notes</p><p class="text-3xl font-bold">${notes.length}</p></div>
+                            <div class="bg-white p-6 rounded-lg shadow"><p class="text-gray-500">Messages</p><p class="text-3xl font-bold">${messages.length}</p></div>
+                            <div class="bg-white p-6 rounded-lg shadow"><p class="text-gray-500">Tasks</p><p class="text-3xl font-bold">${tasks.length}</p></div>
+                        </div>`:''}
+                        ${tab==='notes'?`<h2 class="text-3xl font-bold mb-6">Notes</h2><div class="space-y-4">${notes.map(n=>`<div class="bg-white p-4 rounded-lg shadow"><div class="flex justify-between mb-2"><span class="font-bold">${n.category}</span><span class="text-sm text-gray-500">${n.date||'Today'}</span></div><p class="text-sm">${user.role==='athlete'?n.full_note:n.summary}</p><p class="text-xs text-gray-500 mt-2">- ${n.professional_name}</p></div>`).join('')||'<p class="text-gray-500">No notes</p>'}</div>`:''}
+                        ${tab==='messages'?`<h2 class="text-3xl font-bold mb-6">Messages</h2><div class="space-y-4">${messages.map(m=>`<div class="bg-white p-4 rounded-lg shadow"><p class="font-bold">${m.from_user}</p><p>${m.message}</p></div>`).join('')||'<p class="text-gray-500">No messages</p>'}</div>`:''}
+                        ${tab==='tasks'?`<h2 class="text-3xl font-bold mb-6">Tasks</h2><div class="space-y-4">${tasks.map(t=>`<div class="bg-white p-4 rounded-lg shadow"><p class="font-bold">${t.task}</p><p class="text-sm text-gray-600">For: ${t.athlete_name}</p><p class="text-xs text-gray-500">Due: ${t.due_date}</p></div>`).join('')||'<p class="text-gray-500">No tasks</p>'}</div>`:''}
                     </div>
-                `;
-            } else if (showSignUp) {
-                app.innerHTML = `
-                    <div class="min-h-screen bg-gradient-to-br from-blue-500 to-purple-600 flex items-center justify-center p-4">
-                        <div class="bg-white rounded-lg shadow-xl p-8 w-full max-w-md">
-                            <h1 class="text-3xl font-bold text-center mb-2">Create Account</h1>
-                            <p class="text-center text-gray-600 mb-6">Join Axys-hub</p>
-                            
-                            <div class="space-y-4">
-                                <input id="signupName" type="text" placeholder="Full Name" class="w-full px-4 py-2 border rounded-lg">
-                                <input id="signupEmail" type="email" placeholder="Email" class="w-full px-4 py-2 border rounded-lg">
-                                <input id="signupPassword" type="password" placeholder="Password (min 6 characters)" class="w-full px-4 py-2 border rounded-lg">
-                                <select id="signupRole" class="w-full px-4 py-2 border rounded-lg" onchange="toggleFields()">
-                                    <option value="">Select Your Role</option>
-                                    <option value="athlete">Athlete</option>
-                                    <option value="professional">Professional (Coach/Trainer/etc)</option>
-                                    <option value="admin">Admin</option>
-                                </select>
-                                <input id="signupSport" type="text" placeholder="Your Sport (e.g., Tennis)" class="w-full px-4 py-2 border rounded-lg hidden">
-                                <input id="signupInviteCode" type="text" placeholder="Athlete's Invite Code (optional)" class="w-full px-4 py-2 border rounded-lg hidden">
-                                <button onclick="doSignUp()" class="w-full bg-green-500 text-white py-3 rounded-lg hover:bg-green-600 font-semibold">
-                                    Create Account
-                                </button>
-                            </div>
-                            
-                            <div class="mt-4 text-center">
-                                <button onclick="showSignUp = false; render();" class="text-blue-500 hover:underline">
-                                    Already have an account? Sign In
-                                </button>
-                            </div>
-                        </div>
-                    </div>
-                `;
-            } else if (currentView === 'dashboard') {
-                app.innerHTML = `
-                    <div class="min-h-screen bg-gray-100">
-                        <div class="bg-white shadow-md">
-                            <div class="max-w-7xl mx-auto px-4 py-4 flex justify-between items-center">
-                                <div>
-                                    <h1 class="text-2xl font-bold text-blue-600">Axys-hub</h1>
-                                    <p class="text-sm text-gray-600">${currentUser.name} • ${currentUser.role}</p>
-                                </div>
-                                <button onclick="logout()" class="px-4 py-2 bg-red-500 text-white rounded-lg hover:bg-red-600">
-                                    Logout
-                                </button>
-                            </div>
-                        </div>
-                        
-                        <div class="max-w-7xl mx-auto p-8">
-                            <h2 class="text-3xl font-bold mb-6">Welcome to Axys-hub!</h2>
-                            
-                            ${currentUser.role === 'athlete' && currentUser.invite_code ? `
-                                <div class="bg-green-50 border-2 border-green-500 rounded-lg p-6 mb-6">
-                                    <h3 class="text-xl font-bold mb-3 text-green-900">🎉 Your Team Invite Code</h3>
-                                    <div class="bg-white p-4 rounded-lg mb-3">
-                                        <p class="text-4xl font-mono font-bold text-green-600 text-center">${currentUser.invite_code}</p>
-                                    </div>
-                                    <p class="text-gray-700 font-medium">Share this code with your professionals:</p>
-                                    <ul class="mt-2 space-y-1 text-gray-600">
-                                        <li>• Your psychologist</li>
-                                        <li>• Your coach</li>
-                                        <li>• Your trainer</li>
-                                        <li>• Your nutritionist</li>
-                                    </ul>
-                                    <p class="mt-3 text-sm text-gray-600">They'll use this code when signing up to join your team automatically!</p>
-                                </div>
-                            ` : ''}
-                            
-                            <div class="bg-white rounded-lg shadow p-6 mb-6">
-                                <h3 class="text-xl font-semibold mb-4">Dashboard Features Coming Soon</h3>
-                                <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
-                                    <div class="p-4 bg-blue-50 rounded-lg">
-                                        <h4 class="font-bold mb-2">📝 Notes & Updates</h4>
-                                        <p class="text-sm text-gray-600">Track all your team's session notes</p>
-                                    </div>
-                                    <div class="p-4 bg-purple-50 rounded-lg">
-                                        <h4 class="font-bold mb-2">✅ Task Management</h4>
-                                        <p class="text-sm text-gray-600">Assign and complete tasks</p>
-                                    </div>
-                                    <div class="p-4 bg-green-50 rounded-lg">
-                                        <h4 class="font-bold mb-2">💬 Team Messages</h4>
-                                        <p class="text-sm text-gray-600">Communicate with your support team</p>
-                                    </div>
-                                    <div class="p-4 bg-orange-50 rounded-lg">
-                                        <h4 class="font-bold mb-2">📊 Progress Tracking</h4>
-                                        <p class="text-sm text-gray-600">Visualize your improvements</p>
-                                    </div>
-                                </div>
-                            </div>
-
-                            <div class="bg-blue-50 border border-blue-200 rounded-lg p-4">
-                                <p class="text-sm text-blue-800">
-                                    <strong>Full features coming soon!</strong> Your account is active and ready. 
-                                    We're building out the complete dashboard experience.
-                                </p>
-                            </div>
-                        </div>
-                    </div>
-                `;
+                </div>`;
             }
         }
-
-        function toggleFields() {
-            const role = document.getElementById('signupRole').value;
-            const sportField = document.getElementById('signupSport');
-            const inviteField = document.getElementById('signupInviteCode');
-            
-            sportField.classList.add('hidden');
-            inviteField.classList.add('hidden');
-            
-            if (role === 'athlete') {
-                sportField.classList.remove('hidden');
-            } else if (role === 'professional') {
-                inviteField.classList.remove('hidden');
-            }
-        }
-
-        function doLogin() {
-            const email = document.getElementById('loginEmail').value;
-            const password = document.getElementById('loginPassword').value;
-            
-            if (!email || !password) {
-                alert('Please enter email and password');
-                return;
-            }
-            
-            handleLogin(email, password);
-        }
-
-        function quickLogin(email, password) {
-            handleLogin(email, password);
-        }
-
-        function doSignUp() {
-            const name = document.getElementById('signupName').value;
-            const email = document.getElementById('signupEmail').value;
-            const password = document.getElementById('signupPassword').value;
-            const role = document.getElementById('signupRole').value;
-            const sport = document.getElementById('signupSport').value;
-            const inviteCode = document.getElementById('signupInviteCode').value;
-            
-            if (!name || !email || !password || !role) {
-                alert('Please fill all required fields');
-                return;
-            }
-            
-            if (password.length < 6) {
-                alert('Password must be at least 6 characters');
-                return;
-            }
-            
-            if (role === 'athlete' && !sport) {
-                alert('Please enter your sport');
-                return;
-            }
-            
-            handleSignUp(email, password, name, role, sport, inviteCode);
-        }
-
-        // Initial render
         render();
     </script>
 </body>
