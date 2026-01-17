@@ -3,55 +3,330 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Axys-hub - Coming Soon</title>
+    <title>Axys-hub - Athletic Excellence Platform</title>
+    <script src="https://unpkg.com/@supabase/supabase-js@2.39.0/dist/umd/supabase.js"></script>
     <script src="https://cdn.tailwindcss.com"></script>
 </head>
-<body class="min-h-screen bg-gradient-to-br from-blue-500 to-purple-600 flex items-center justify-center p-4">
-    <div class="bg-white rounded-lg shadow-xl p-8 w-full max-w-md text-center">
-        <h1 class="text-4xl font-bold text-gray-800 mb-4">Axys-hub</h1>
-        <p class="text-xl text-gray-600 mb-6">The central axis of athletic excellence</p>
-        
-        <div class="bg-blue-50 border-2 border-blue-500 rounded-lg p-6 mb-6">
-            <h2 class="text-2xl font-bold text-blue-900 mb-2">🚀 We're Live!</h2>
-            <p class="text-gray-700 mb-4">Platform under final development</p>
-            <p class="text-sm text-gray-600">Your subscription-based athlete coordination platform is being finalized.</p>
-        </div>
+<body>
+    <div id="app"></div>
+    
+    <script>
+        // Initialize Supabase (using window.supabase from UMD)
+        const { createClient } = supabase;
+        const supabaseClient = createClient(
+            'https://agxfjrqzevqjwvlkhzxz.supabase.co',
+            'sb_publishable_onnVe10I5QZpO9f2W3tuGg_uoORomht'
+        );
 
-        <div class="space-y-3 text-left">
-            <div class="flex items-start gap-3">
-                <span class="text-green-500 text-xl">✓</span>
-                <div>
-                    <p class="font-semibold">Domain Secured</p>
-                    <p class="text-sm text-gray-600">axys-hub.com ready to connect</p>
-                </div>
-            </div>
-            <div class="flex items-start gap-3">
-                <span class="text-green-500 text-xl">✓</span>
-                <div>
-                    <p class="font-semibold">Database Ready</p>
-                    <p class="text-sm text-gray-600">Supabase configured</p>
-                </div>
-            </div>
-            <div class="flex items-start gap-3">
-                <span class="text-green-500 text-xl">✓</span>
-                <div>
-                    <p class="font-semibold">Deployment Active</p>
-                    <p class="text-sm text-gray-600">Hosted on Vercel</p>
-                </div>
-            </div>
-        </div>
+        // App state
+        let currentUser = null;
+        let currentView = 'login';
+        let showSignUp = false;
 
-        <div class="mt-8 p-4 bg-gray-50 rounded-lg">
-            <p class="text-sm text-gray-600">Coming Soon:</p>
-            <ul class="text-sm text-gray-700 mt-2 space-y-1">
-                <li>• Athlete Registration & Login</li>
-                <li>• Team Invite Codes</li>
-                <li>• Notes & Task Management</li>
-                <li>• Razorpay Payment Integration</li>
-            </ul>
-        </div>
+        // Generate invite code
+        function generateInviteCode() {
+            const chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789';
+            return Array.from({length: 8}, () => chars[Math.floor(Math.random() * chars.length)]).join('');
+        }
 
-        <p class="mt-6 text-xs text-gray-500">Powered by Supabase, Vercel & Razorpay</p>
-    </div>
+        // Sign Up
+        async function handleSignUp(email, password, name, role, sport, inviteCode) {
+            try {
+                // Create auth user
+                const { data: authData, error: authError } = await supabaseClient.auth.signUp({
+                    email: email,
+                    password: password,
+                });
+
+                if (authError) throw authError;
+
+                // Generate invite code for athletes
+                const newInviteCode = role === 'athlete' ? generateInviteCode() : null;
+                
+                // Create user record
+                const { data: userData, error: userError } = await supabaseClient
+                    .from('users')
+                    .insert([{
+                        email: email,
+                        password: password, // In production, hash this!
+                        name: name,
+                        role: role,
+                        invite_code: newInviteCode
+                    }])
+                    .select()
+                    .single();
+
+                if (userError) throw userError;
+
+                // If athlete, create athlete record
+                if (role === 'athlete') {
+                    await supabaseClient.from('athletes').insert([{
+                        user_id: userData.id,
+                        name: name,
+                        sport: sport,
+                        email: email,
+                        invite_code: newInviteCode
+                    }]);
+                }
+
+                // If professional with invite code, join team
+                if (role === 'professional' && inviteCode) {
+                    const { data: athleteData } = await supabaseClient
+                        .from('athletes')
+                        .select('*')
+                        .eq('invite_code', inviteCode)
+                        .single();
+
+                    if (athleteData) {
+                        await supabaseClient.from('team_members').insert([{
+                            athlete_id: athleteData.id,
+                            professional_id: userData.id,
+                            professional_name: name
+                        }]);
+                    }
+                }
+
+                alert('Account created successfully! You can now login.');
+                showSignUp = false;
+                currentView = 'login';
+                render();
+            } catch (error) {
+                alert('Signup error: ' + error.message);
+                console.error(error);
+            }
+        }
+
+        // Login
+        async function handleLogin(email, password) {
+            try {
+                const { data: authData, error: authError } = await supabaseClient.auth.signInWithPassword({
+                    email: email,
+                    password: password
+                });
+
+                if (authError) throw authError;
+
+                // Get user data from database
+                const { data: userData, error: userError } = await supabaseClient
+                    .from('users')
+                    .select('*')
+                    .eq('email', email)
+                    .single();
+
+                if (userError) throw userError;
+
+                currentUser = userData;
+                currentView = 'dashboard';
+                render();
+            } catch (error) {
+                alert('Login failed: ' + error.message);
+                console.error(error);
+            }
+        }
+
+        // Logout
+        function logout() {
+            supabaseClient.auth.signOut();
+            currentUser = null;
+            currentView = 'login';
+            showSignUp = false;
+            render();
+        }
+
+        // Render app
+        function render() {
+            const app = document.getElementById('app');
+            
+            if (currentView === 'login' && !showSignUp) {
+                app.innerHTML = `
+                    <div class="min-h-screen bg-gradient-to-br from-blue-500 to-purple-600 flex items-center justify-center p-4">
+                        <div class="bg-white rounded-lg shadow-xl p-8 w-full max-w-md">
+                            <h1 class="text-4xl font-bold text-center mb-2">Axys-hub</h1>
+                            <p class="text-center text-gray-600 mb-8">The central axis of athletic excellence</p>
+                            
+                            <div class="space-y-4">
+                                <input id="loginEmail" type="email" placeholder="Email" class="w-full px-4 py-2 border rounded-lg focus:ring-2 focus:ring-blue-500">
+                                <input id="loginPassword" type="password" placeholder="Password" class="w-full px-4 py-2 border rounded-lg focus:ring-2 focus:ring-blue-500">
+                                <button onclick="doLogin()" class="w-full bg-blue-500 text-white py-3 rounded-lg hover:bg-blue-600 font-semibold">
+                                    Sign In
+                                </button>
+                            </div>
+                            
+                            <div class="mt-6 text-center">
+                                <button onclick="showSignUp = true; render();" class="text-blue-500 hover:underline font-medium">
+                                    Don't have an account? Sign Up
+                                </button>
+                            </div>
+
+                            <div class="mt-6 p-4 bg-gray-50 rounded-lg text-sm">
+                                <p class="font-semibold mb-2">Demo Accounts:</p>
+                                <button onclick="quickLogin('admin@axys-hub.com', 'admin123')" class="w-full text-left p-2 bg-white rounded hover:bg-blue-50 border mb-2">
+                                    <strong>Admin:</strong> admin@axys-hub.com
+                                </button>
+                            </div>
+                        </div>
+                    </div>
+                `;
+            } else if (showSignUp) {
+                app.innerHTML = `
+                    <div class="min-h-screen bg-gradient-to-br from-blue-500 to-purple-600 flex items-center justify-center p-4">
+                        <div class="bg-white rounded-lg shadow-xl p-8 w-full max-w-md">
+                            <h1 class="text-3xl font-bold text-center mb-2">Create Account</h1>
+                            <p class="text-center text-gray-600 mb-6">Join Axys-hub</p>
+                            
+                            <div class="space-y-4">
+                                <input id="signupName" type="text" placeholder="Full Name" class="w-full px-4 py-2 border rounded-lg">
+                                <input id="signupEmail" type="email" placeholder="Email" class="w-full px-4 py-2 border rounded-lg">
+                                <input id="signupPassword" type="password" placeholder="Password (min 6 characters)" class="w-full px-4 py-2 border rounded-lg">
+                                <select id="signupRole" class="w-full px-4 py-2 border rounded-lg" onchange="toggleFields()">
+                                    <option value="">Select Your Role</option>
+                                    <option value="athlete">Athlete</option>
+                                    <option value="professional">Professional (Coach/Trainer/etc)</option>
+                                    <option value="admin">Admin</option>
+                                </select>
+                                <input id="signupSport" type="text" placeholder="Your Sport (e.g., Tennis)" class="w-full px-4 py-2 border rounded-lg hidden">
+                                <input id="signupInviteCode" type="text" placeholder="Athlete's Invite Code (optional)" class="w-full px-4 py-2 border rounded-lg hidden">
+                                <button onclick="doSignUp()" class="w-full bg-green-500 text-white py-3 rounded-lg hover:bg-green-600 font-semibold">
+                                    Create Account
+                                </button>
+                            </div>
+                            
+                            <div class="mt-4 text-center">
+                                <button onclick="showSignUp = false; render();" class="text-blue-500 hover:underline">
+                                    Already have an account? Sign In
+                                </button>
+                            </div>
+                        </div>
+                    </div>
+                `;
+            } else if (currentView === 'dashboard') {
+                app.innerHTML = `
+                    <div class="min-h-screen bg-gray-100">
+                        <div class="bg-white shadow-md">
+                            <div class="max-w-7xl mx-auto px-4 py-4 flex justify-between items-center">
+                                <div>
+                                    <h1 class="text-2xl font-bold text-blue-600">Axys-hub</h1>
+                                    <p class="text-sm text-gray-600">${currentUser.name} • ${currentUser.role}</p>
+                                </div>
+                                <button onclick="logout()" class="px-4 py-2 bg-red-500 text-white rounded-lg hover:bg-red-600">
+                                    Logout
+                                </button>
+                            </div>
+                        </div>
+                        
+                        <div class="max-w-7xl mx-auto p-8">
+                            <h2 class="text-3xl font-bold mb-6">Welcome to Axys-hub!</h2>
+                            
+                            ${currentUser.role === 'athlete' && currentUser.invite_code ? `
+                                <div class="bg-green-50 border-2 border-green-500 rounded-lg p-6 mb-6">
+                                    <h3 class="text-xl font-bold mb-3 text-green-900">🎉 Your Team Invite Code</h3>
+                                    <div class="bg-white p-4 rounded-lg mb-3">
+                                        <p class="text-4xl font-mono font-bold text-green-600 text-center">${currentUser.invite_code}</p>
+                                    </div>
+                                    <p class="text-gray-700 font-medium">Share this code with your professionals:</p>
+                                    <ul class="mt-2 space-y-1 text-gray-600">
+                                        <li>• Your psychologist</li>
+                                        <li>• Your coach</li>
+                                        <li>• Your trainer</li>
+                                        <li>• Your nutritionist</li>
+                                    </ul>
+                                    <p class="mt-3 text-sm text-gray-600">They'll use this code when signing up to join your team automatically!</p>
+                                </div>
+                            ` : ''}
+                            
+                            <div class="bg-white rounded-lg shadow p-6 mb-6">
+                                <h3 class="text-xl font-semibold mb-4">Dashboard Features Coming Soon</h3>
+                                <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+                                    <div class="p-4 bg-blue-50 rounded-lg">
+                                        <h4 class="font-bold mb-2">📝 Notes & Updates</h4>
+                                        <p class="text-sm text-gray-600">Track all your team's session notes</p>
+                                    </div>
+                                    <div class="p-4 bg-purple-50 rounded-lg">
+                                        <h4 class="font-bold mb-2">✅ Task Management</h4>
+                                        <p class="text-sm text-gray-600">Assign and complete tasks</p>
+                                    </div>
+                                    <div class="p-4 bg-green-50 rounded-lg">
+                                        <h4 class="font-bold mb-2">💬 Team Messages</h4>
+                                        <p class="text-sm text-gray-600">Communicate with your support team</p>
+                                    </div>
+                                    <div class="p-4 bg-orange-50 rounded-lg">
+                                        <h4 class="font-bold mb-2">📊 Progress Tracking</h4>
+                                        <p class="text-sm text-gray-600">Visualize your improvements</p>
+                                    </div>
+                                </div>
+                            </div>
+
+                            <div class="bg-blue-50 border border-blue-200 rounded-lg p-4">
+                                <p class="text-sm text-blue-800">
+                                    <strong>Full features coming soon!</strong> Your account is active and ready. 
+                                    We're building out the complete dashboard experience.
+                                </p>
+                            </div>
+                        </div>
+                    </div>
+                `;
+            }
+        }
+
+        function toggleFields() {
+            const role = document.getElementById('signupRole').value;
+            const sportField = document.getElementById('signupSport');
+            const inviteField = document.getElementById('signupInviteCode');
+            
+            sportField.classList.add('hidden');
+            inviteField.classList.add('hidden');
+            
+            if (role === 'athlete') {
+                sportField.classList.remove('hidden');
+            } else if (role === 'professional') {
+                inviteField.classList.remove('hidden');
+            }
+        }
+
+        function doLogin() {
+            const email = document.getElementById('loginEmail').value;
+            const password = document.getElementById('loginPassword').value;
+            
+            if (!email || !password) {
+                alert('Please enter email and password');
+                return;
+            }
+            
+            handleLogin(email, password);
+        }
+
+        function quickLogin(email, password) {
+            handleLogin(email, password);
+        }
+
+        function doSignUp() {
+            const name = document.getElementById('signupName').value;
+            const email = document.getElementById('signupEmail').value;
+            const password = document.getElementById('signupPassword').value;
+            const role = document.getElementById('signupRole').value;
+            const sport = document.getElementById('signupSport').value;
+            const inviteCode = document.getElementById('signupInviteCode').value;
+            
+            if (!name || !email || !password || !role) {
+                alert('Please fill all required fields');
+                return;
+            }
+            
+            if (password.length < 6) {
+                alert('Password must be at least 6 characters');
+                return;
+            }
+            
+            if (role === 'athlete' && !sport) {
+                alert('Please enter your sport');
+                return;
+            }
+            
+            handleSignUp(email, password, name, role, sport, inviteCode);
+        }
+
+        // Initial render
+        render();
+    </script>
 </body>
 </html>
